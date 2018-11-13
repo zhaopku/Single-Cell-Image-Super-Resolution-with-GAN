@@ -85,7 +85,6 @@ class Train:
 
 		print('{}, #param = {}'.format(self.args.model, sum(param.numel() for param in self.model.parameters())))
 
-
 	def construct_out_dir(self):
 		self.result_dir = utils.construct_dir(prefix=self.args.result_dir, args=self.args)
 		self.out_image_dir = os.path.join(self.result_dir, 'images')
