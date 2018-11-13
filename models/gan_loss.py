@@ -23,7 +23,7 @@ class GeneratorLoss(nn.Module):
 		:return:
 		"""
 		# Adversarial Loss
-		adversarial_loss = torch.mean(1 - sr_probs)
+		adversarial_loss = -torch.mean(torch.sr_probs)
 		# mse Loss
 		mse_loss = self.mse_loss(sr_images, hr_images)
 

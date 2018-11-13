@@ -11,6 +11,7 @@ from models.model_gen import SRGANGenerator
 import pytorch_ssim
 import math
 import torchvision.utils
+from models.model_discriminator import Discriminator
 
 class Train:
 	def __init__(self):
@@ -41,10 +42,10 @@ class Train:
 
 		# neural network options
 		nn_args = parser.add_argument_group('Network options')
-		nn_args.add_argument('--crop_size', default=30, type=int, help='training images crop size')
-		nn_args.add_argument('--upscale_factor', default=4, type=int, choices=[2, 4, 6, 8],
+		nn_args.add_argument('--crop_size', default=56, type=int, help='training images crop size')
+		nn_args.add_argument('--upscale_factor', default=4, type=int, choices=[2, 4, 8],
 		                    help='super resolution upscale factor')
-		nn_args.add_argument('--model', type=str, default='SRGAN_GEN', help='string to specify model')
+		nn_args.add_argument('--model', type=str, default='SRGAN', help='string to specify model')
 		nn_args.add_argument('--in_channels', type=int, default=1)
 
 		# training options
@@ -53,6 +54,7 @@ class Train:
 		training_args.add_argument('--n_save', type=int, default=5, help='number of test images to save on disk')
 		training_args.add_argument('--epochs', type=int, default=200, help='number of training epochs')
 		training_args.add_argument('--lr', type=float, default=0.001, help='learning rate')
+		training_args.add_argument('--gamma', type=float, default=0.0001, help='coefficient for adversarial loss')
 
 		return parser.parse_args(args)
 
@@ -72,18 +74,25 @@ class Train:
 			self.model = ModelSRCNN(args=self.args)
 		elif self.args.model == 'SRGAN_GEN':
 			self.model = SRGANGenerator(args=self.args)
-
+			self.optimizer = optimizer.Adam(self.model.parameters(), lr=self.args.lr)
+			print('{}, #param = {}'.format(self.args.model, sum(param.numel() for param in self.model.parameters())))
 		elif self.args.model == 'SRGAN':
-			raise NotImplementedError
+			self.generator = SRGANGenerator(args=self.args)
+			self.discriminator = Discriminator(args=self.args)
+
+			self.optimizerG = optimizer.Adam(self.generator.parameters(), lr=self.args.lr)
+			self.optimizerD = optimizer.Adam(self.discriminator.parameters(), lr=self.args.lr)
+			print('{}, #generator param = {}, discriminator param {}'.
+			      format(self.args.model, sum(param.numel() for param in self.generator.parameters()),
+			             sum(param.numel() for param in self.discriminator.parameters())))
+
 		else:
 			print('Invalid model string: {}'.format(self.args.model))
 
-		self.optimizer = optimizer.Adam(self.model.parameters(), lr=self.args.lr)
 
 		# average over all the pixels in the batch
-		self.loss = torch.nn.MSELoss(reduction='elementwise_mean')
+		self.mse_loss = torch.nn.MSELoss(reduction='elementwise_mean')
 
-		print('{}, #param = {}'.format(self.args.model, sum(param.numel() for param in self.model.parameters())))
 
 	def construct_out_dir(self):
 		self.result_dir = utils.construct_dir(prefix=self.args.result_dir, args=self.args)
@@ -107,9 +116,173 @@ class Train:
 
 		self.construct_out_dir()
 
-
 		with open(self.out_path, 'w') as self.out:
-			self.train_loop()
+			if self.args.model == 'SRGAN':
+				self.gan_train_loop()
+			else:
+				self.train_loop()
+
+	def gan_train_loop(self):
+		# put to GPU
+		if torch.cuda.is_available():
+			self.discriminator.cuda()
+			self.generator.cuda()
+			self.mse_loss = self.mse_loss.cuda()
+
+		for e in range(self.args.epochs):
+			# switch to training mode
+			self.discriminator.train()
+			self.generator.train()
+
+			train_results = {'mse_loss': 0.0, 'adv_loss': 0.0,
+							 'sr_probs': 0.0, 'n_samples':0}
+
+			for idx, (lr_image, hr_image) in enumerate(tqdm(self.train_loader)):
+				cur_batch_size = lr_image.size(0)
+				train_results['n_samples'] += cur_batch_size
+				# put data to GPU
+				if torch.cuda.is_available():
+					lr_image = lr_image.cuda()
+					hr_image = hr_image.cuda()
+
+				sr_image = self.generator(lr_image)
+				if torch.cuda.is_available():
+					sr_image = sr_image.cuda()
+
+				# probs/log_probs of sr_image being real image
+				sr_probs, log_sr_probs = self.discriminator(sr_image)
+				train_results['sr_probs'] += sr_probs.data.cpu().sum()
+
+				# update
+
+				#################
+				# discriminator #
+				#################
+				self.discriminator.zero_grad()
+				d_loss = -log_sr_probs.mean()
+				d_loss *= self.args.gamma
+				train_results['adv_loss'] += d_loss.data.cpu()
+				d_loss.backward(retain_graph=True)
+				self.optimizerD.step()
+
+				#################
+				#   generator   #
+				#################
+				self.generator.zero_grad()
+
+
+				mse_loss = self.mse_loss(input=sr_image, target=hr_image)
+				train_results['mse_loss'] += mse_loss.data.cpu()
+				mse_loss.backward()
+				self.optimizerG.step()
+
+			print('Epoch = {}, mse_loss = {}, adv_loss = {}, sr_probs = {}'.
+			      format(e, train_results['mse_loss'], train_results['adv_loss'], train_results['sr_probs']/train_results['n_samples']))
+			self.out.write('Epoch = {}, mse_loss = {}, adv_loss = {}, sr_probs = {}\n'.
+			      format(e, train_results['mse_loss'], train_results['adv_loss'], train_results['sr_probs']/train_results['n_samples']))
+
+			self.out.flush()
+			self.gan_validate(epoch=e)
+
+	def gan_validate(self, epoch):
+		with torch.no_grad():
+			self.generator.eval()
+			self.discriminator.eval()
+			val_results = {'mse_loss': 0, 'sr_probs': 0, 'adv_loss':0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'n_samples': 0}
+
+			if not self.naive_results_computed:
+				self.naive_results = {'mse_loss': 0, 'sr_probs': 0, 'adv_loss':0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'n_samples': 0}
+
+			# TODO: to finish
+			val_images = []
+			for idx, (lr_image, naive_hr_image, hr_image) in enumerate(tqdm(self.val_loader)):
+				# put data to GPU
+
+				cur_batch_size = lr_image.size(0)
+				val_results['n_samples'] += cur_batch_size
+
+				if torch.cuda.is_available():
+					lr_image = lr_image.cuda()
+					naive_hr_image = naive_hr_image.cuda()
+					hr_image = hr_image.cuda()
+
+				sr_image = self.generator(lr_image)
+				sr_probs, log_sr_probs = self.discriminator(sr_image)
+				val_results['sr_probs'] += sr_probs.data.cpu().sum()
+
+				mse_loss = self.mse_loss(input=sr_image, target=hr_image)
+				val_results['mse_loss'] += mse_loss.data.cpu() * cur_batch_size
+
+				d_loss = -log_sr_probs.mean()
+				val_results['adv_loss'] += d_loss.data.cpu()
+				d_loss *= self.args.gamma
+
+				batch_ssim = pytorch_ssim.ssim(sr_image, hr_image).item()
+				val_results['ssims'] += batch_ssim * cur_batch_size
+				val_results['psnr'] = 10 * math.log10(1 / (val_results['mse_loss'] / val_results['n_samples']))
+				val_results['ssim'] = val_results['ssims'] / val_results['n_samples']
+
+				# to save memory
+				# self.optimizerG.zero_grad()
+				# self.optimizerD.zero_grad()
+
+				if not self.naive_results_computed:
+					naive_mse_loss = self.mse_loss(input=naive_hr_image, target=hr_image).data.cpu()
+					naive_sr_probs, naive_log_sr_probs = self.discriminator(naive_hr_image)
+					naive_d_loss = -naive_log_sr_probs.mean()
+					self.naive_results['adv_loss'] += naive_d_loss.data.cpu()
+
+					self.naive_results['sr_probs'] += naive_sr_probs.data.cpu().sum()
+					self.naive_results['mse_loss'] += naive_mse_loss * cur_batch_size
+					naive_batch_ssim = pytorch_ssim.ssim(naive_hr_image, hr_image).item()
+					self.naive_results['ssims'] += naive_batch_ssim * cur_batch_size
+					self.naive_results['psnr'] = 10 * math.log10(1 / (self.naive_results['mse_loss'] / val_results['n_samples']))
+					self.naive_results['ssim'] = self.naive_results['ssims'] / val_results['n_samples']
+
+				# only save certain number of images
+
+				# transform does not support batch processing
+				if idx < self.args.n_save:
+					for image_idx in range(cur_batch_size):
+						val_images.extend(
+							[display_transform()(lr_image[image_idx].data.cpu()),
+							 display_transform()(naive_hr_image[image_idx].data.cpu()),
+							 display_transform()(hr_image[image_idx].data.cpu()),
+							 display_transform()(sr_image[image_idx].data.cpu())])
+
+			# write to output file
+			print('\tmse_loss = {}, adv_loss = {}, sr_probs = {}'.
+			      format(val_results['mse_loss'], val_results['adv_loss'], val_results['sr_probs']/val_results['n_samples']))
+			print('\tssims = {}, psnr = {}, ssim = {}'.
+			      format(val_results['ssims'], val_results['psnr'], val_results['ssim']))
+
+			self.out.write('\tmse_loss = {}, adv_loss = {}, sr_probs = {}\n'.
+			      format(val_results['mse_loss'], val_results['adv_loss'], val_results['sr_probs']/val_results['n_samples']))
+			self.out.write('\tssims = {}, psnr = {}, ssim = {}\n'.
+			      format(val_results['ssims'], val_results['psnr'], val_results['ssim']))
+
+			if not self.naive_results_computed:
+				# write to output file
+				print('\tnaive mse_loss = {}, adv_loss = {}, sr_probs = {}'.
+				      format(self.naive_results['mse_loss'], self.naive_results['adv_loss'],
+				             self.naive_results['sr_probs'] / val_results['n_samples']))
+				print('\tssims = {}, psnr = {}, ssim = {}'.
+				      format(self.naive_results['ssims'], self.naive_results['psnr'], self.naive_results['ssim']))
+
+				self.out.write('\tnaive mse_loss = {}, adv_loss = {}, sr_probs = {}\n'.
+				               format(self.naive_results['mse_loss'], self.naive_results['adv_loss'],
+				                      self.naive_results['sr_probs'] / val_results['n_samples']))
+				self.out.write('\tssims = {}, psnr = {}, ssim = {}\n'.
+				               format(self.naive_results['ssims'], self.naive_results['psnr'], self.naive_results['ssim']))
+
+				self.naive_results_computed = True
+
+			self.out.flush()
+			# save model
+			torch.save((self.generator.state_dict(), self.discriminator.state_dict()),
+			           os.path.join(self.model_dir, str(epoch)+'.pth'))
+
+			self.save_image(val_images, epoch)
 
 	def train_loop(self):
 
@@ -131,9 +304,9 @@ class Train:
 				# sr_image, should have the same shape as hr_image
 				sr_image = self.model(lr_image)
 
-				loss = self.loss(input=sr_image, target=hr_image)
+				loss = self.mse_loss(input=sr_image, target=hr_image)
 
-				train_loss += loss
+				train_loss += loss.data.cpu()
 
 				self.model.zero_grad()
 				loss.backward()
@@ -142,76 +315,81 @@ class Train:
 			print('Epoch = {}, Train loss = {}'.format(e, train_loss))
 			self.out.write('Epoch = {}, Train loss = {}\n'.format(e, train_loss))
 			self.out.flush()
+
 			self.validate(epoch=e)
 
 	def validate(self, epoch):
-		self.model.eval()
-		val_results = {'mse': 0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'val_size': 0}
-
-		if not self.naive_results_computed:
-			self.naive_results = {'mse': 0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'val_size': 0}
-
-		val_images = []
-		for idx, (lr_image, naive_hr_image, hr_image) in enumerate(tqdm(self.val_loader)):
-			# put data to GPU
-
-			cur_batch_size = lr_image.size(0)
-			val_results['val_size'] += cur_batch_size
-
-			if torch.cuda.is_available():
-				lr_image = lr_image.cuda()
-				naive_hr_image = naive_hr_image.cuda()
-				hr_image = hr_image.cuda()
-
-			sr_image = self.model(lr_image)
-
-			batch_mse = ((sr_image - hr_image) ** 2).data.mean()
-			val_results['mse'] += batch_mse * cur_batch_size
-			batch_ssim = pytorch_ssim.ssim(sr_image, hr_image).item()
-			val_results['ssims'] += batch_ssim * cur_batch_size
-			val_results['psnr'] = 10 * math.log10(1 / (val_results['mse'] / val_results['val_size']))
-			val_results['ssim'] = val_results['ssims'] / val_results['val_size']
+		with torch.no_grad():
+			self.model.eval()
+			val_results = {'mse': 0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'val_size': 0}
 
 			if not self.naive_results_computed:
-				naive_batch_mse = ((naive_hr_image - hr_image) ** 2).data.mean()
-				self.naive_results['mse'] += naive_batch_mse * cur_batch_size
-				naive_batch_ssim = pytorch_ssim.ssim(naive_hr_image, hr_image).item()
-				self.naive_results['ssims'] += naive_batch_ssim * cur_batch_size
-				self.naive_results['psnr'] = 10 * math.log10(1 / (self.naive_results['mse'] / val_results['val_size']))
-				self.naive_results['ssim'] = self.naive_results['ssims'] / val_results['val_size']
+				self.naive_results = {'mse': 0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'val_size': 0}
 
-			# only save certain number of images
+			val_images = []
+			for idx, (lr_image, naive_hr_image, hr_image) in enumerate(tqdm(self.val_loader)):
+				# put data to GPU
 
-			# transform does not support batch processing
-			if idx < self.args.n_save:
-				for image_idx in range(cur_batch_size):
-					val_images.extend(
-						[display_transform()(lr_image[image_idx].data.cpu()),
-						 display_transform()(naive_hr_image[image_idx].data.cpu()),
-						 display_transform()(hr_image[image_idx].data.cpu()),
-						 display_transform()(sr_image[image_idx].data.cpu())])
+				cur_batch_size = lr_image.size(0)
+				val_results['val_size'] += cur_batch_size
 
-		# write to out file
-		result_line = '\tVal\t'
-		for k, v in val_results.items():
-			result_line += '{} = {} '.format(k, v)
+				if torch.cuda.is_available():
+					lr_image = lr_image.cuda()
+					naive_hr_image = naive_hr_image.cuda()
+					hr_image = hr_image.cuda()
 
-		if not self.naive_results_computed:
-			result_line += '\n'
-			for k, v in self.naive_results.items():
-				result_line += 'naive_{} = {} '.format(k, v)
-			self.naive_results_computed = True
+				sr_image = self.model(lr_image)
 
-		print(result_line)
-		self.out.write(result_line+'\n')
-		self.out.flush()
-		# save model
-		torch.save(self.model.state_dict(), os.path.join(self.model_dir, str(epoch)+'.pth'))
+				batch_mse = ((sr_image - hr_image) ** 2).data.mean()
+				val_results['mse'] += batch_mse * cur_batch_size
+				batch_ssim = pytorch_ssim.ssim(sr_image, hr_image).item()
+				val_results['ssims'] += batch_ssim * cur_batch_size
+				val_results['psnr'] = 10 * math.log10(1 / (val_results['mse'] / val_results['val_size']))
+				val_results['ssim'] = val_results['ssims'] / val_results['val_size']
 
-		val_images = torch.stack(val_images)
+				if not self.naive_results_computed:
+					naive_batch_mse = ((naive_hr_image - hr_image) ** 2).data.mean()
+					self.naive_results['mse'] += naive_batch_mse * cur_batch_size
+					naive_batch_ssim = pytorch_ssim.ssim(naive_hr_image, hr_image).item()
+					self.naive_results['ssims'] += naive_batch_ssim * cur_batch_size
+					self.naive_results['psnr'] = 10 * math.log10(1 / (self.naive_results['mse'] / val_results['val_size']))
+					self.naive_results['ssim'] = self.naive_results['ssims'] / val_results['val_size']
+
+				# only save certain number of images
+
+				# transform does not support batch processing
+				if idx < self.args.n_save:
+					for image_idx in range(cur_batch_size):
+						val_images.extend(
+							[display_transform()(lr_image[image_idx].data.cpu()),
+							 display_transform()(naive_hr_image[image_idx].data.cpu()),
+							 display_transform()(hr_image[image_idx].data.cpu()),
+							 display_transform()(sr_image[image_idx].data.cpu())])
+
+			# write to out file
+			result_line = '\tVal\t'
+			for k, v in val_results.items():
+				result_line += '{} = {} '.format(k, v)
+
+			if not self.naive_results_computed:
+				result_line += '\n'
+				for k, v in self.naive_results.items():
+					result_line += 'naive_{} = {} '.format(k, v)
+				self.naive_results_computed = True
+
+			print(result_line)
+			self.out.write(result_line+'\n')
+			self.out.flush()
+			# save model
+			torch.save(self.model.state_dict(), os.path.join(self.model_dir, str(epoch)+'.pth'))
+
+			self.save_image(val_images, epoch)
+
+	def save_image(self, images, epoch):
+		images = torch.stack(images)
 
 		# number of out images, 15 is number of sub-images in an output image
-		n_out_images = (val_images.size(0) // (4*5) + 1)
+		n_out_images = (images.size(0) // (4*5) + 1)
 
 		cur_out_image_dir = os.path.join(self.out_image_dir, 'epoch_%d' % epoch)
 
@@ -219,11 +397,9 @@ class Train:
 			os.makedirs(cur_out_image_dir)
 
 		for idx in tqdm(range(n_out_images), desc='saving validating image'):
-			image = torch.Tensor(val_images[idx*(4*5):(idx+1)*(4*5)])
+			image = torch.Tensor(images[idx*(4*5):(idx+1)*(4*5)])
 			if image.size()[0] < 1:
 				break
 			image = torchvision.utils.make_grid(image, nrow=4, padding=5)
 			save_path = os.path.join(cur_out_image_dir, 'index_%d.jpg' % idx)
 			torchvision.utils.save_image(image, save_path, padding=5)
-
-
