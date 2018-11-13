@@ -225,11 +225,11 @@ class Train:
 				self.optimizerG.step()
 
 			# write to out file
-			result_line = 'Epoch %d,' % e
+			result_line = 'Epoch %d, ' % e
 			for k, v in train_results.items():
 				if k == 'n_samples':
 					continue
-				result_line += '{} = {} '.format(k, v/train_results['n_samples'])
+				result_line += '{} = {}, '.format(k, v/train_results['n_samples'])
 			print(result_line)
 			self.out.write(result_line+'\n')
 
@@ -302,7 +302,7 @@ class Train:
 			# write to out file
 			result_line = '\tVal\t'
 			for k, v in val_results.items():
-				result_line += '{} = {} '.format(k, v)
+				result_line += '{} = {}, '.format(k, v)
 
 			if not self.naive_results_computed:
 				result_line += '\n'
@@ -310,6 +310,10 @@ class Train:
 				for k, v in self.naive_results.items():
 					result_line += 'naive_{} = {} '.format(k, v)
 				self.naive_results_computed = True
+			else:
+				result_line += '\n\t'
+				self.naive_results['D_G_z'] = self.naive_results['D_G_z'] / val_results['n_samples']
+				result_line += 'naive D_G_z = {}'.format(self.naive_results['D_G_z']/val_results['n_samples'])
 
 			print(result_line)
 			self.out.write(result_line+'\n')
