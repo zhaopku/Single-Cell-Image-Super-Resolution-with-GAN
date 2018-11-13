@@ -1,0 +1,125 @@
+from os import listdir
+from os.path import join
+import numpy as np
+from PIL import Image
+from torch.utils.data.dataset import Dataset
+from torchvision.transforms import Compose, RandomCrop, ToTensor, ToPILImage, CenterCrop, Resize
+import torch
+
+MAX_PIXEL = 1536
+MIN_PIXEL = 0
+
+
+def is_image_file(filename):
+	return any(filename.endswith(extension) for extension in ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG'])
+
+
+def calculate_valid_crop_size(crop_size, upscale_factor):
+	return crop_size - (crop_size % upscale_factor)
+
+# ToTensor(): to convert the numpy images to torch images
+# swap color axis because
+# numpy image: H x W x C
+# torch image: C X H X W
+
+def train_hr_transform(crop_size):
+	return Compose([
+		# Crop the given PIL Image at a random location.
+		RandomCrop(crop_size),
+		ToTensor(),
+	])
+
+
+def train_lr_transform(crop_size, upscale_factor):
+	return Compose([
+		ToPILImage(),
+		# Resize() takes as input a PIL image, first argument is desired output size
+		# https://pytorch.org/docs/stable/torchvision/transforms.html
+		Resize(crop_size // upscale_factor, interpolation=Image.BICUBIC),
+		ToTensor()
+	])
+
+
+def display_transform():
+	return Compose([
+		ToPILImage(),
+		# make the output image larger
+		Resize(200, interpolation=Image.BICUBIC),
+		CenterCrop(200),
+		ToTensor()
+	])
+
+
+
+class TrainDatasetFromFolder(Dataset):
+	def __init__(self, dataset_dir, crop_size, upscale_factor):
+		super(TrainDatasetFromFolder, self).__init__()
+		self.image_filenames = [join(dataset_dir, x) for x in listdir(dataset_dir) if is_image_file(x)]
+		crop_size = calculate_valid_crop_size(crop_size, upscale_factor)
+
+		self.hr_transform = train_hr_transform(crop_size)
+		self.lr_transform = train_lr_transform(crop_size, upscale_factor)
+
+	def __getitem__(self, index):
+		# for high resolution images, first random crop to augment data, then convert to Torch tensor
+		# xx = Image.open(self.image_filenames[index])
+		# yy = RandomCrop(50)(xx)
+		# zz = ToTensor()(yy)
+		hr_image = self.hr_transform(Image.open(self.image_filenames[index]))
+		# to obtain low resolution image, use resize at the high resolution image
+		lr_image = self.lr_transform(hr_image)
+		return lr_image, hr_image
+
+	def __len__(self):
+		return len(self.image_filenames)
+
+
+class ValDatasetFromFolder(Dataset):
+	def __init__(self, dataset_dir, upscale_factor):
+		super(ValDatasetFromFolder, self).__init__()
+		self.upscale_factor = upscale_factor
+		self.image_filenames = [join(dataset_dir, x) for x in listdir(dataset_dir) if is_image_file(x)]
+
+	def __getitem__(self, index):
+		# this is the original image, without random crop
+		hr_image = Image.open(self.image_filenames[index])
+		# size of the original image
+		w, h = hr_image.size
+		crop_size = calculate_valid_crop_size(min(w, h), self.upscale_factor)
+		lr_scale = Resize(crop_size // self.upscale_factor, interpolation=Image.BICUBIC)
+		hr_scale = Resize(crop_size, interpolation=Image.BICUBIC)
+		# original high resolution image
+		hr_image = CenterCrop(crop_size)(hr_image)
+		# downscaled low resolution image
+		lr_image = lr_scale(hr_image)
+		# x, y = lr_image.size
+		# super resolution image with naive method. Same shape as the original high resolution image
+		hr_restore_img = hr_scale(lr_image)
+		ConvertToTensor = ToTensor()
+
+		return ConvertToTensor(lr_image), ConvertToTensor(hr_restore_img), ConvertToTensor(hr_image)
+
+	def __len__(self):
+		return len(self.image_filenames)
+
+
+class TestDatasetFromFolder(Dataset):
+	def __init__(self, dataset_dir, upscale_factor):
+		super(TestDatasetFromFolder, self).__init__()
+		self.lr_path = dataset_dir + '/SRF_' + str(upscale_factor) + '/data/'
+		self.hr_path = dataset_dir + '/SRF_' + str(upscale_factor) + '/target/'
+		self.upscale_factor = upscale_factor
+		self.lr_filenames = [join(self.lr_path, x) for x in listdir(self.lr_path) if is_image_file(x)]
+		self.hr_filenames = [join(self.hr_path, x) for x in listdir(self.hr_path) if is_image_file(x)]
+
+	def __getitem__(self, index):
+		image_name = self.lr_filenames[index].split('/')[-1]
+		lr_image = Image.open(self.lr_filenames[index])
+		w, h = lr_image.size
+		hr_image = Image.open(self.hr_filenames[index])
+		hr_scale = Resize((self.upscale_factor * h, self.upscale_factor * w), interpolation=Image.BICUBIC)
+		hr_restore_img = hr_scale(lr_image)
+		return image_name, ToTensor()(lr_image), ToTensor()(hr_restore_img), ToTensor()(hr_image)
+
+	def __len__(self):
+		return len(self.lr_filenames)
