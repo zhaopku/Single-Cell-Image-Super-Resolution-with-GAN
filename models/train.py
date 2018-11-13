@@ -92,6 +92,8 @@ class Train:
 
 		# average over all the pixels in the batch
 		self.mse_loss = torch.nn.MSELoss(reduction='elementwise_mean')
+		# average over all samples
+		self.bce_loss = torch.nn.BCELoss(reduction='elementwise_mean')
 
 
 	def construct_out_dir(self):
@@ -134,8 +136,17 @@ class Train:
 			self.discriminator.train()
 			self.generator.train()
 
-			train_results = {'mse_loss': 0.0, 'adv_loss': 0.0,
-							 'sr_probs': 0.0, 'n_samples':0}
+			# errG: generator loss, loss for generator not failing to fool discriminator
+			# D_G_z1: probability of discriminator being fooled before update
+			# D_G_z2: probability of discriminator being fooled after update
+			# D_x: probability of a real image recognized by discriminator
+			# errD_real: loss for discriminator not recognizing real images
+			# errD_fake: loss for discriminator not recognizing fake images
+
+			train_results = {'mse_loss': 0.0, 'errG': 0.0, 'D_G_z1': 0.0,
+							 'D_G_z2': 0.0, 'D_x': 0.0, 'errD_real': 0.0,
+							 'errD_fake': 0.0,
+							 'n_samples':0}
 
 			for idx, (lr_image, hr_image) in enumerate(tqdm(self.train_loader)):
 				cur_batch_size = lr_image.size(0)
@@ -145,41 +156,82 @@ class Train:
 					lr_image = lr_image.cuda()
 					hr_image = hr_image.cuda()
 
-				sr_image = self.generator(lr_image)
-				if torch.cuda.is_available():
-					sr_image = sr_image.cuda()
-
-				# probs/log_probs of sr_image being real image
-				sr_probs, log_sr_probs = self.discriminator(sr_image)
-				train_results['sr_probs'] += sr_probs.data.cpu().sum()
 
 				# update
 
 				#################
 				# discriminator #
 				#################
+				# maximize log(D(x)) + log(1 - D(G(z)))
+				# D(x): probability of real being original
+				# 1 - D(G(z)): probability of fake not being original
+
+				## with all real batch
 				self.discriminator.zero_grad()
-				d_loss = -log_sr_probs.mean()
-				d_loss *= self.args.gamma
-				train_results['adv_loss'] += d_loss.data.cpu()
-				d_loss.backward(retain_graph=True)
+				real_label = torch.full((cur_batch_size,), 1)
+				if torch.cuda.is_available():
+					real_label = real_label.cuda()
+				hr_probs, log_hr_probs = self.discriminator(hr_image)
+
+				errD_real = self.bce_loss(hr_probs.view(-1), real_label)
+				train_results['errD_real'] += errD_real.data.cpu() * cur_batch_size
+				# errD_real.backward()
+				D_x = hr_probs.data.cpu()
+				train_results['D_x'] += D_x.data.cpu().sum()
+
+				## with all fake batch
+				sr_image = self.generator(lr_image)
+				if torch.cuda.is_available():
+					sr_image = sr_image.cuda()
+
+				fake_label = torch.full((cur_batch_size,), 0)
+				if torch.cuda.is_available():
+					fake_label = fake_label.cuda()
+				sr_probs, log_sr_probs = self.discriminator(sr_image)
+
+				errD_fake = self.bce_loss(sr_probs.view(-1), fake_label)
+				train_results['errD_fake'] += errD_fake.data.cpu() * cur_batch_size
+				# errD_fake.backward()
+
+				D_G_z1 = sr_probs.data.cpu()
+				train_results['D_G_z1'] += D_G_z1.data.cpu().sum()
+
+				D_loss = errD_real + errD_fake
+				D_loss.backward(retain_graph=True)
 				self.optimizerD.step()
 
 				#################
 				#   generator   #
 				#################
+
+				# maximize log(D(G(z)))
+
 				self.generator.zero_grad()
+				# for generator, we want the fake images to be true
+				real_label = torch.full((cur_batch_size, ), 1)
+				if torch.cuda.is_available():
+					real_label = real_label.cuda()
 
-
+				sr_probs, log_sr_probs = self.discriminator(sr_image)
+				errG = self.bce_loss(sr_probs.view(-1), real_label)
+				D_G_z2 = sr_probs.data.cpu()
+				train_results['errG'] += errG.data.cpu().sum()
+				train_results['D_G_z2'] += D_G_z2.data.cpu().sum()
+				# plus we want to minimize the mse loss
 				mse_loss = self.mse_loss(input=sr_image, target=hr_image)
-				train_results['mse_loss'] += mse_loss.data.cpu()
-				mse_loss.backward()
+				train_results['mse_loss'] += mse_loss.data.cpu() * cur_batch_size
+				G_loss = errG*self.args.gamma + mse_loss
+				G_loss.backward()
 				self.optimizerG.step()
 
-			print('Epoch = {}, mse_loss = {}, adv_loss = {}, sr_probs = {}'.
-			      format(e, train_results['mse_loss'], train_results['adv_loss'], train_results['sr_probs']/train_results['n_samples']))
-			self.out.write('Epoch = {}, mse_loss = {}, adv_loss = {}, sr_probs = {}\n'.
-			      format(e, train_results['mse_loss'], train_results['adv_loss'], train_results['sr_probs']/train_results['n_samples']))
+			# write to out file
+			result_line = 'Epoch %d,' % e
+			for k, v in train_results.items():
+				if k == 'n_samples':
+					continue
+				result_line += '{} = {} '.format(k, v/train_results['n_samples'])
+			print(result_line)
+			self.out.write(result_line+'\n')
 
 			self.out.flush()
 			self.gan_validate(epoch=e)
@@ -188,10 +240,10 @@ class Train:
 		with torch.no_grad():
 			self.generator.eval()
 			self.discriminator.eval()
-			val_results = {'mse_loss': 0, 'sr_probs': 0, 'adv_loss':0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'n_samples': 0}
+			val_results = {'mse_loss': 0, 'D_G_z':0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'n_samples': 0}
 
 			if not self.naive_results_computed:
-				self.naive_results = {'mse_loss': 0, 'sr_probs': 0, 'adv_loss':0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'n_samples': 0}
+				self.naive_results = {'mse_loss': 0, 'D_G_z':0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'n_samples': 0}
 
 			# TODO: to finish
 			val_images = []
@@ -208,14 +260,10 @@ class Train:
 
 				sr_image = self.generator(lr_image)
 				sr_probs, log_sr_probs = self.discriminator(sr_image)
-				val_results['sr_probs'] += sr_probs.data.cpu().sum()
+				val_results['D_G_z'] += sr_probs.data.cpu().sum()
 
 				mse_loss = self.mse_loss(input=sr_image, target=hr_image)
 				val_results['mse_loss'] += mse_loss.data.cpu() * cur_batch_size
-
-				d_loss = -log_sr_probs.mean()
-				val_results['adv_loss'] += d_loss.data.cpu()
-				d_loss *= self.args.gamma
 
 				batch_ssim = pytorch_ssim.ssim(sr_image, hr_image).item()
 				val_results['ssims'] += batch_ssim * cur_batch_size
@@ -229,10 +277,8 @@ class Train:
 				if not self.naive_results_computed:
 					naive_mse_loss = self.mse_loss(input=naive_hr_image, target=hr_image).data.cpu()
 					naive_sr_probs, naive_log_sr_probs = self.discriminator(naive_hr_image)
-					naive_d_loss = -naive_log_sr_probs.mean()
-					self.naive_results['adv_loss'] += naive_d_loss.data.cpu()
 
-					self.naive_results['sr_probs'] += naive_sr_probs.data.cpu().sum()
+					self.naive_results['D_G_z'] += naive_sr_probs.data.cpu().sum()
 					self.naive_results['mse_loss'] += naive_mse_loss * cur_batch_size
 					naive_batch_ssim = pytorch_ssim.ssim(naive_hr_image, hr_image).item()
 					self.naive_results['ssims'] += naive_batch_ssim * cur_batch_size
@@ -250,32 +296,24 @@ class Train:
 							 display_transform()(hr_image[image_idx].data.cpu()),
 							 display_transform()(sr_image[image_idx].data.cpu())])
 
-			# write to output file
-			print('\tmse_loss = {}, adv_loss = {}, sr_probs = {}'.
-			      format(val_results['mse_loss'], val_results['adv_loss'], val_results['sr_probs']/val_results['n_samples']))
-			print('\tssims = {}, psnr = {}, ssim = {}'.
-			      format(val_results['ssims'], val_results['psnr'], val_results['ssim']))
 
-			self.out.write('\tmse_loss = {}, adv_loss = {}, sr_probs = {}\n'.
-			      format(val_results['mse_loss'], val_results['adv_loss'], val_results['sr_probs']/val_results['n_samples']))
-			self.out.write('\tssims = {}, psnr = {}, ssim = {}\n'.
-			      format(val_results['ssims'], val_results['psnr'], val_results['ssim']))
+			val_results['D_G_z'] = val_results['D_G_z'] / val_results['n_samples']
+
+			# write to out file
+			result_line = '\tVal\t'
+			for k, v in val_results.items():
+				result_line += '{} = {} '.format(k, v)
 
 			if not self.naive_results_computed:
-				# write to output file
-				print('\tnaive mse_loss = {}, adv_loss = {}, sr_probs = {}'.
-				      format(self.naive_results['mse_loss'], self.naive_results['adv_loss'],
-				             self.naive_results['sr_probs'] / val_results['n_samples']))
-				print('\tssims = {}, psnr = {}, ssim = {}'.
-				      format(self.naive_results['ssims'], self.naive_results['psnr'], self.naive_results['ssim']))
-
-				self.out.write('\tnaive mse_loss = {}, adv_loss = {}, sr_probs = {}\n'.
-				               format(self.naive_results['mse_loss'], self.naive_results['adv_loss'],
-				                      self.naive_results['sr_probs'] / val_results['n_samples']))
-				self.out.write('\tssims = {}, psnr = {}, ssim = {}\n'.
-				               format(self.naive_results['ssims'], self.naive_results['psnr'], self.naive_results['ssim']))
-
+				result_line += '\n'
+				self.naive_results['D_G_z'] = self.naive_results['D_G_z'] / val_results['n_samples']
+				for k, v in self.naive_results.items():
+					result_line += 'naive_{} = {} '.format(k, v)
 				self.naive_results_computed = True
+
+			print(result_line)
+			self.out.write(result_line+'\n')
+			self.out.flush()
 
 			self.out.flush()
 			# save model
