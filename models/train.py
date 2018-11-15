@@ -55,6 +55,7 @@ class Train:
 		training_args.add_argument('--epochs', type=int, default=200, help='number of training epochs')
 		training_args.add_argument('--lr', type=float, default=0.001, help='learning rate')
 		training_args.add_argument('--gamma', type=float, default=0.0001, help='coefficient for adversarial loss')
+		training_args.add_argument('--theta', type=float, default=0.01, help='coefficient for discriminator learning rate')
 
 		return parser.parse_args(args)
 
@@ -81,7 +82,7 @@ class Train:
 			self.discriminator = Discriminator(args=self.args)
 
 			self.optimizerG = optimizer.Adam(self.generator.parameters(), lr=self.args.lr)
-			self.optimizerD = optimizer.Adam(self.discriminator.parameters(), lr=self.args.lr)
+			self.optimizerD = optimizer.Adam(self.discriminator.parameters(), lr=self.args.lr*self.args.theta)
 			print('{}, #generator param = {}, discriminator param {}'.
 			      format(self.args.model, sum(param.numel() for param in self.generator.parameters()),
 			             sum(param.numel() for param in self.discriminator.parameters())))
@@ -229,7 +230,10 @@ class Train:
 			for k, v in train_results.items():
 				if k == 'n_samples':
 					continue
-				result_line += '{} = {}, '.format(k, v/train_results['n_samples'])
+				if k != 'mse_loss' or k.find('err') != -1:
+					result_line += '{} = {}, '.format(k, v/train_results['n_samples'])
+				else:
+					result_line += '{} = {}, '.format(k, v)
 			print(result_line)
 			self.out.write(result_line+'\n')
 
@@ -273,12 +277,12 @@ class Train:
 				# to save memory
 				# self.optimizerG.zero_grad()
 				# self.optimizerD.zero_grad()
+				naive_sr_probs, naive_log_sr_probs = self.discriminator(naive_hr_image)
+
+				self.naive_results['D_G_z'] += naive_sr_probs.data.cpu().sum()
 
 				if not self.naive_results_computed:
 					naive_mse_loss = self.mse_loss(input=naive_hr_image, target=hr_image).data.cpu()
-					naive_sr_probs, naive_log_sr_probs = self.discriminator(naive_hr_image)
-
-					self.naive_results['D_G_z'] += naive_sr_probs.data.cpu().sum()
 					self.naive_results['mse_loss'] += naive_mse_loss * cur_batch_size
 					naive_batch_ssim = pytorch_ssim.ssim(naive_hr_image, hr_image).item()
 					self.naive_results['ssims'] += naive_batch_ssim * cur_batch_size

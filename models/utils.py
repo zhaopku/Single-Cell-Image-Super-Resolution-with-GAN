@@ -9,7 +9,9 @@ def construct_dir(prefix, args):
 	path += str(args.batch_size)
 	path += '_cr_' + str(args.crop_size)
 	path += '_up_' + str(args.upscale_factor)
+
 	if args.model == "SRGAN":
 		path += '_gamma_' + str(args.gamma)
+		path += '_theta_' + str(args.theta)
 
 	return os.path.join(prefix, path)
