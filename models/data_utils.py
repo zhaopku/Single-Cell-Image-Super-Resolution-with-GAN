@@ -44,17 +44,34 @@ def display_transform():
 	return Compose([
 		ToPILImage(),
 		# make the output image larger
-		Resize(200, interpolation=Image.BICUBIC),
-		CenterCrop(200),
+		# Resize(200, interpolation=Image.BICUBIC),
+		# CenterCrop(200),
 		ToTensor()
 	])
 
+def create_new_lr_image(lr_images, hr_images):
+	lr_images_new = torch.zeros_like(hr_images)
 
+	_, _, old_height, old_width = lr_images.size()
+	batch_size, channel, height, width = hr_images.size()
+
+	for idx in range(batch_size):
+		for c in range(channel):
+			for h in range(height):
+				for w in range(width):
+					if h < old_height and w < old_width:
+						lr_images_new[idx][c][h][w] = lr_images[idx][c][h][w]
+
+	return lr_images_new
 
 class TrainDatasetFromFolder(Dataset):
-	def __init__(self, dataset_dir, crop_size, upscale_factor):
+	def __init__(self, dataset_dir, crop_size, upscale_factor, ratio=1.0):
 		super(TrainDatasetFromFolder, self).__init__()
-		self.image_filenames = [join(dataset_dir, x) for x in listdir(dataset_dir) if is_image_file(x)]
+		all_image_filenames = [join(dataset_dir, x) for x in listdir(dataset_dir) if is_image_file(x)]
+
+		train_size = int(len(all_image_filenames) * ratio)
+		self.image_filenames = all_image_filenames[:train_size]
+
 		crop_size = calculate_valid_crop_size(crop_size, upscale_factor)
 
 		self.hr_transform = train_hr_transform(crop_size)

@@ -14,4 +14,7 @@ def construct_dir(prefix, args):
 		path += '_gamma_' + str(args.gamma)
 		path += '_theta_' + str(args.theta)
 
+	if args.ratio != 1.0:
+		path += '_ratio_' + str(args.ratio)
+
 	return os.path.join(prefix, path)

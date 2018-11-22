@@ -3,7 +3,7 @@ from tqdm import tqdm
 import argparse
 import os
 import torch.optim as optimizer
-from models.data_utils import TrainDatasetFromFolder, ValDatasetFromFolder, TestDatasetFromFolder, display_transform
+from models.data_utils import TrainDatasetFromFolder, ValDatasetFromFolder, TestDatasetFromFolder, display_transform, create_new_lr_image
 from torch.utils.data import DataLoader
 from models.model_srcnn import ModelSRCNN
 from models import utils
@@ -33,12 +33,13 @@ class Train:
 		parser = argparse.ArgumentParser()
 
 		data_args = parser.add_argument_group('Dataset options')
-		data_args.add_argument('--data_dir', default='./data/ds_dapi_mini')
+		data_args.add_argument('--data_dir', default='./data/ds_dapi')
 		data_args.add_argument('--train_dir', default='train')
 		data_args.add_argument('--val_dir', default='val')
 		data_args.add_argument('--test_dir', default='test')
 
 		data_args.add_argument('--result_dir', default='./result')
+		data_args.add_argument('--ratio', type=float, default=1.0, help='ratio of training data used')
 
 		# neural network options
 		nn_args = parser.add_argument_group('Network options')
@@ -52,9 +53,9 @@ class Train:
 		training_args = parser.add_argument_group('Training options')
 		training_args.add_argument('--batch_size', type=int, default=10)
 		training_args.add_argument('--n_save', type=int, default=5, help='number of test images to save on disk')
-		training_args.add_argument('--epochs', type=int, default=200, help='number of training epochs')
+		training_args.add_argument('--epochs', type=int, default=100, help='number of training epochs')
 		training_args.add_argument('--lr', type=float, default=0.001, help='learning rate')
-		training_args.add_argument('--gamma', type=float, default=0.0001, help='coefficient for adversarial loss')
+		training_args.add_argument('--gamma', type=float, default=0.001, help='coefficient for adversarial loss')
 		training_args.add_argument('--theta', type=float, default=0.01, help='coefficient for discriminator learning rate')
 
 		return parser.parse_args(args)
@@ -62,7 +63,7 @@ class Train:
 	def construct_data(self):
 		self.training_set = TrainDatasetFromFolder(os.path.join(self.args.data_dir, self.args.train_dir),
 		                                           crop_size=self.args.crop_size,
-		                                   upscale_factor=self.args.upscale_factor)
+		                                   upscale_factor=self.args.upscale_factor, ratio=self.args.ratio)
 
 		self.val_set = ValDatasetFromFolder(os.path.join(self.args.data_dir, self.args.val_dir),
 		                                   upscale_factor=self.args.upscale_factor)
@@ -275,8 +276,6 @@ class Train:
 				val_results['ssim'] = val_results['ssims'] / val_results['n_samples']
 
 				# to save memory
-				# self.optimizerG.zero_grad()
-				# self.optimizerD.zero_grad()
 				naive_sr_probs, naive_log_sr_probs = self.discriminator(naive_hr_image)
 
 				self.naive_results['D_G_z'] += naive_sr_probs.data.cpu().sum()
@@ -292,6 +291,7 @@ class Train:
 				# only save certain number of images
 
 				# transform does not support batch processing
+				lr_image = create_new_lr_image(lr_image, hr_image)
 				if idx < self.args.n_save:
 					for image_idx in range(cur_batch_size):
 						val_images.extend(
@@ -335,7 +335,7 @@ class Train:
 		# put model to GPU if available
 		if torch.cuda.is_available():
 			self.model.cuda()
-			self.loss = self.loss.cuda()
+			self.mse_loss = self.mse_loss.cuda()
 
 		for e in range(self.args.epochs):
 			# switch the model to training mode
@@ -404,8 +404,11 @@ class Train:
 				# only save certain number of images
 
 				# transform does not support batch processing
+				lr_image = create_new_lr_image(lr_image, hr_image)
 				if idx < self.args.n_save:
 					for image_idx in range(cur_batch_size):
+
+
 						val_images.extend(
 							[display_transform()(lr_image[image_idx].data.cpu()),
 							 display_transform()(naive_hr_image[image_idx].data.cpu()),
