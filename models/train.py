@@ -44,7 +44,7 @@ class Train:
 		# neural network options
 		nn_args = parser.add_argument_group('Network options')
 		nn_args.add_argument('--crop_size', default=56, type=int, help='training images crop size')
-		nn_args.add_argument('--upscale_factor', default=4, type=int, choices=[2, 4, 8],
+		nn_args.add_argument('--upscale_factor', default=2, type=int, choices=[2, 4, 8],
 		                    help='super resolution upscale factor')
 		nn_args.add_argument('--model', type=str, default='SRGAN', help='string to specify model')
 		nn_args.add_argument('--in_channels', type=int, default=1)
@@ -87,10 +87,8 @@ class Train:
 			print('{}, #generator param = {}, discriminator param {}'.
 			      format(self.args.model, sum(param.numel() for param in self.generator.parameters()),
 			             sum(param.numel() for param in self.discriminator.parameters())))
-
 		else:
 			print('Invalid model string: {}'.format(self.args.model))
-
 
 		# average over all the pixels in the batch
 		self.mse_loss = torch.nn.MSELoss(reduction='elementwise_mean')
@@ -119,6 +117,15 @@ class Train:
 		self.construct_model()
 
 		self.construct_out_dir()
+
+		self.model_path = './saved_models/up_2.pth'
+		if torch.cuda.is_available():
+			(generate_state_dict, discriminator_state_dict) = torch.load(self.model_path, map_location='gpu')
+		else:
+			(generate_state_dict, discriminator_state_dict) = torch.load(self.model_path, map_location='cpu')
+
+		self.generator.load_state_dict(generate_state_dict)
+		self.discriminator.load_state_dict(discriminator_state_dict)
 
 		with open(self.out_path, 'w') as self.out:
 			if self.args.model == 'SRGAN':
@@ -157,7 +164,6 @@ class Train:
 				if torch.cuda.is_available():
 					lr_image = lr_image.cuda()
 					hr_image = hr_image.cuda()
-
 
 				# update
 
@@ -291,7 +297,7 @@ class Train:
 				# only save certain number of images
 
 				# transform does not support batch processing
-				lr_image = create_new_lr_image(lr_image, hr_image)
+				#lr_image = create_new_lr_image(lr_image, hr_image)
 				if idx < self.args.n_save:
 					for image_idx in range(cur_batch_size):
 						val_images.extend(
@@ -404,7 +410,7 @@ class Train:
 				# only save certain number of images
 
 				# transform does not support batch processing
-				lr_image = create_new_lr_image(lr_image, hr_image)
+				#lr_image = create_new_lr_image(lr_image, hr_image)
 				if idx < self.args.n_save:
 					for image_idx in range(cur_batch_size):
 
