@@ -1,3 +1,3 @@
-# ds-SR
+# Super-Resolution for Cell Images
 
 GAN
