@@ -44,8 +44,8 @@ def display_transform():
 	return Compose([
 		ToPILImage(),
 		# make the output image larger
-		Resize(200, interpolation=Image.BICUBIC),
-		CenterCrop(200),
+		# Resize(200, interpolation=Image.BICUBIC),
+		# CenterCrop(200),
 		ToTensor()
 	])
 
@@ -120,32 +120,24 @@ class ValDatasetFromFolder(Dataset):
 		return len(self.image_filenames)
 
 
-class TestOutDatasetFromFolder(Dataset):
+class TestRawDatasetFromFolder(Dataset):
 	"""
 	only used to convert raw low resolution images to high resolution images
 	does not need high resolution images
 	"""
 	def __init__(self, dataset_dir, upscale_factor):
-		super(TestOutDatasetFromFolder, self).__init__()
+		super(TestRawDatasetFromFolder, self).__init__()
 		self.upscale_factor = upscale_factor
 		self.image_filenames = [join(dataset_dir, x) for x in listdir(dataset_dir) if is_image_file(x)]
 
 	def __getitem__(self, index):
-		hr_image = Image.open(self.image_filenames[index])
-		w, h = hr_image.size
-		crop_size = calculate_valid_crop_size(min(w, h), self.upscale_factor)
-		#hr_image = CenterCrop(crop_size)(hr_image)
+		lr_image = Image.open(self.image_filenames[index])
+		w, h = lr_image.size
 
-		w, h = hr_image.size
-		lr_scale = Resize(w // self.upscale_factor, interpolation=Image.BICUBIC)
+		hr_scale = Resize((self.upscale_factor * w, self.upscale_factor * h), interpolation=Image.BICUBIC)
 
-
-		h_low, w_low = w // self.upscale_factor, h // self.upscale_factor
-		hr_scale = Resize((self.upscale_factor * h_low, self.upscale_factor * w_low), interpolation=Image.BICUBIC)
-
-		lr_image = lr_scale(hr_image)
 		hr_restore_img = hr_scale(lr_image)
-		return ToTensor()(lr_image), ToTensor()(hr_restore_img), ToTensor()(hr_image)
+		return ToTensor()(lr_image), ToTensor()(hr_restore_img)
 
 	def __len__(self):
 		return len(self.image_filenames)

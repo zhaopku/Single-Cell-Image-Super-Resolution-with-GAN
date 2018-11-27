@@ -33,10 +33,11 @@ class Train:
 		parser = argparse.ArgumentParser()
 
 		data_args = parser.add_argument_group('Dataset options')
-		data_args.add_argument('--data_dir', default='./data/ds_dapi')
-		data_args.add_argument('--train_dir', default='train')
-		data_args.add_argument('--val_dir', default='val')
-		data_args.add_argument('--test_dir', default='test')
+		data_args.add_argument('--data_dir', type=str, default='data')
+		data_args.add_argument('--category', type=str, default='ds_dapi')
+		data_args.add_argument('--train_dir', type=str, default='train')
+		data_args.add_argument('--val_dir', type=str, default='val')
+		data_args.add_argument('--test_dir', type=str, default='test')
 
 		data_args.add_argument('--result_dir', default='./result')
 		data_args.add_argument('--ratio', type=float, default=1.0, help='ratio of training data used')
@@ -61,11 +62,11 @@ class Train:
 		return parser.parse_args(args)
 
 	def construct_data(self):
-		self.training_set = TrainDatasetFromFolder(os.path.join(self.args.data_dir, self.args.train_dir),
+		self.training_set = TrainDatasetFromFolder(os.path.join(self.args.data_dir, self.args.category, self.args.train_dir),
 		                                           crop_size=self.args.crop_size,
 		                                   upscale_factor=self.args.upscale_factor, ratio=self.args.ratio)
 
-		self.val_set = ValDatasetFromFolder(os.path.join(self.args.data_dir, self.args.val_dir),
+		self.val_set = ValDatasetFromFolder(os.path.join(self.args.data_dir, self.args.category, self.args.val_dir),
 		                                   upscale_factor=self.args.upscale_factor)
 
 		self.train_loader = DataLoader(dataset=self.training_set, num_workers=0, batch_size=self.args.batch_size, shuffle=True)
@@ -118,14 +119,14 @@ class Train:
 
 		self.construct_out_dir()
 
-		self.model_path = './saved_models/up_2.pth'
-		if torch.cuda.is_available():
-			(generate_state_dict, discriminator_state_dict) = torch.load(self.model_path, map_location='gpu')
-		else:
-			(generate_state_dict, discriminator_state_dict) = torch.load(self.model_path, map_location='cpu')
-
-		self.generator.load_state_dict(generate_state_dict)
-		self.discriminator.load_state_dict(discriminator_state_dict)
+		# self.model_path = './saved_models/up_2.pth'
+		# if torch.cuda.is_available():
+		# 	(generate_state_dict, discriminator_state_dict) = torch.load(self.model_path, map_location='gpu')
+		# else:
+		# 	(generate_state_dict, discriminator_state_dict) = torch.load(self.model_path, map_location='cpu')
+		#
+		# self.generator.load_state_dict(generate_state_dict)
+		# self.discriminator.load_state_dict(discriminator_state_dict)
 
 		with open(self.out_path, 'w') as self.out:
 			if self.args.model == 'SRGAN':
@@ -297,7 +298,7 @@ class Train:
 				# only save certain number of images
 
 				# transform does not support batch processing
-				#lr_image = create_new_lr_image(lr_image, hr_image)
+				lr_image = create_new_lr_image(lr_image, hr_image)
 				if idx < self.args.n_save:
 					for image_idx in range(cur_batch_size):
 						val_images.extend(
@@ -410,7 +411,7 @@ class Train:
 				# only save certain number of images
 
 				# transform does not support batch processing
-				#lr_image = create_new_lr_image(lr_image, hr_image)
+				lr_image = create_new_lr_image(lr_image, hr_image)
 				if idx < self.args.n_save:
 					for image_idx in range(cur_batch_size):
 

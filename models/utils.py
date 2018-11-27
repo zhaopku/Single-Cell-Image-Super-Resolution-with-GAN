@@ -3,6 +3,7 @@ import os
 def construct_dir(prefix, args):
 	path = ''
 	path += str(args.model)
+	path += '_' + str(args.category)
 	path += '_lr_'
 	path += str(args.lr)
 	path += '_bt_'
