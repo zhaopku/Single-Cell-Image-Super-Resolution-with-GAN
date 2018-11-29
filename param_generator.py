@@ -38,22 +38,25 @@ bsub -W 10:00 -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngp
 bsub -W 10:00 -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_raw_images.py --in_path=20x_dapi --out_path=20x_dapi_scale --upscale_factor 8 --batch_size 50 --n_save 20
 
 module load python_gpu/3.6.4
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_raw_images.py --in_path=40x_dapi --out_path=40x_dapi_scale --upscale_factor 2 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_raw_images.py --in_path=40x_dapi --out_path=40x_dapi_scale --upscale_factor 4 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_raw_images.py --in_path=40x_dapi --out_path=40x_dapi_scale --upscale_factor 8 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_raw_images.py --in_path=DAPI --out_path=DAPI_scale --upscale_factor 2 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_raw_images.py --in_path=DAPI --out_path=DAPI_scale --upscale_factor 4 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_raw_images.py --in_path=DAPI --out_path=DAPI_scale --upscale_factor 8 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=DAPI --out_path=DAPI_simulate --upscale_factor 2 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=DAPI --out_path=DAPI_simulate --upscale_factor 4 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=DAPI --out_path=DAPI_simulate --upscale_factor 8 --batch_size 25 --n_save 40
+
 
 
 module load python_gpu/3.6.4
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=40x_dapi --out_path=40x_dapi_simulate --upscale_factor 2 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=40x_dapi --out_path=40x_dapi_simulate --upscale_factor 4 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=40x_dapi --out_path=40x_dapi_simulate --upscale_factor 8 --batch_size 25 --n_save 40
-
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=20x_dapi --out_path=20x_dapi_simulate --upscale_factor 2 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=20x_dapi --out_path=20x_dapi_simulate --upscale_factor 4 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=20x_dapi --out_path=20x_dapi_simulate --upscale_factor 8 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=10x_dapi --out_path=10x_dapi_simulate --upscale_factor 2 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=10x_dapi --out_path=10x_dapi_simulate --upscale_factor 4 --batch_size 25 --n_save 40
-bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=10x_dapi --out_path=10x_dapi_simulate --upscale_factor 8 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=APC --out_path=APC_simulate --upscale_factor 2 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=APC --out_path=APC_simulate --upscale_factor 4 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=APC --out_path=APC_simulate --upscale_factor 8 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=PE --out_path=PE_simulate --upscale_factor 2 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=PE --out_path=PE_simulate --upscale_factor 4 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=PE --out_path=PE_simulate --upscale_factor 8 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=EGFP --out_path=EGFP_simulate --upscale_factor 2 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=3072,ngpus_excl_p=1]" python test_images.py --in_path=EGFP --out_path=EGFP_simulate --upscale_factor 4 --batch_size 25 --n_save 40
+bsub -n 3 -R  "select[gpu_model1==GeForceGTX1080Ti] rusage[mem=5072,ngpus_excl_p=1]" python test_images.py --in_path=EGFP --out_path=EGFP_simulate --upscale_factor 8 --batch_size 25 --n_save 40
 
 
 """
