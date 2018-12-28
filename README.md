@@ -17,6 +17,6 @@ The above command trains a GAN-based model, with upscaling factor 8.
 ### Details
 see models/train.py for commandline options.
 
-### Examples
+## Examples
 
 Go to https://zhaopku.github.io/sr.html
